@@ -147,8 +147,11 @@ class MambaModel(nn.Module):
         )
         
     def forward(self, x, lengths=None):
+        #保存输入
+        batch_features = x
+        
         # x shape: (batch_size, max_seq_len, input_dim)
-        batch_size, seq_len, _ = x.shape
+        _, seq_len, _ = x.shape
         
         # 输入嵌入
         x = self.input_embedding(x)  # (batch_size, seq_len, d_model)
@@ -173,8 +176,28 @@ class MambaModel(nn.Module):
         
         # 输出预测
         params = self.output_layer(x_pooled)  # (batch_size, n_params)
-        
-        return params
+        output = self.manual_financial_model(batch_features,params)
+        return output
+    
+    def manual_financial_model(self, batch_features, params):
+        """
+        使用自定义的金融公式计算每个序列样本的预测股价。
+        - batch_features: shape (batch_size, seq_len, input_dim)
+        - params: shape (batch_size, 4)
+        返回: shape (batch_size,)
+        """
+        # 拆解参数
+        a, b, c, d = params[:, 0], params[:, 1], params[:, 2], params[:, 3]  # 每个 (batch_size,)
+
+        # 计算特征统计量
+        mean_feat = batch_features.mean(dim=[1, 2])      # (batch_size,)
+        max_feat = batch_features.max(dim=1).values.max(dim=1).values  # (batch_size,)
+        std_feat = batch_features.std(dim=[1, 2])         # (batch_size,)
+
+        # 构造手工股价预测公式
+        output = a * mean_feat + b * max_feat + c * std_feat + d
+
+        return output  # (batch_size,)
 
 class FinancialDataset(Dataset):
     """财务数据集"""
@@ -186,30 +209,39 @@ class FinancialDataset(Dataset):
     
     def __getitem__(self, idx):
         sample = self.data[idx]
-        features = torch.FloatTensor(sample['features'])
-        targets = torch.FloatTensor(sample['targets'])
-        length = torch.LongTensor([len(sample['features'])])
-        
-        return features, targets, length
+        features = torch.FloatTensor(sample['features'])  # shape: (seq_len, input_dim)
+        target = torch.tensor([sample['targets']], dtype=torch.float32)  # shape: (1,)
+        length = features.shape[0]
+        return features, target, length
 
 def collate_fn(batch):
-    """处理变长序列的批处理函数"""
-    features_list, targets_list, lengths_list = zip(*batch)
-    
-    # 获取最大长度
-    max_length = max([f.shape[0] for f in features_list])
-    feature_dim = features_list[0].shape[1]
-    
-    # 填充序列
-    padded_features = torch.zeros(len(batch), max_length, feature_dim)
-    targets = torch.stack(targets_list)
-    lengths = torch.cat(lengths_list)
-    
-    for i, features in enumerate(features_list):
-        seq_len = features.shape[0]
-        padded_features[i, :seq_len, :] = features
-    
-    return padded_features, targets, lengths
+    """
+    batch: List of tuples from Dataset.__getitem__:
+        Each tuple: (features: Tensor(seq_len, input_dim),
+                     target: Tensor(()),
+                     length: int)
+    """
+    max_len = max(len(f) for f, _, _ in batch)
+
+    batch_features = []
+    batch_targets = []
+    batch_lengths = []
+
+    for features, target, length in batch:
+        pad_len = max_len - len(features)
+        if pad_len > 0:
+            pad = torch.zeros(pad_len, features.shape[1])
+            features = torch.cat([features, pad], dim=0)
+        
+        batch_features.append(features)
+        batch_targets.append(target)
+        batch_lengths.append(length)
+
+    batch_features = torch.stack(batch_features)              # (batch_size, max_seq_len, input_dim)
+    batch_targets = torch.stack(batch_targets).squeeze()      # (batch_size,)
+    batch_lengths = torch.tensor(batch_lengths, dtype=torch.long)
+
+    return batch_features, batch_targets, batch_lengths
 
 def generate_synthetic_data(n_companies=100, min_quarters=8, max_quarters=40):
     """生成合成财务数据"""
@@ -251,13 +283,7 @@ def generate_synthetic_data(n_companies=100, min_quarters=8, max_quarters=40):
         ])
         
         # 生成目标参数（基于财务特征的复杂函数）
-        # 这里模拟你的预测模型需要的4个参数
-        param1 = 0.3 + 0.4 * np.tanh(np.mean(profit_margin))  # 盈利能力参数
-        param2 = 0.2 + 0.6 * (1 / (1 + np.mean(debt_ratio)))  # 财务稳健性参数
-        param3 = 0.1 + 0.8 * np.tanh(np.mean(roe))  # 增长潜力参数
-        param4 = 0.4 + 0.3 * np.tanh(np.mean(asset_turnover) - 0.5)  # 运营效率参数
-        
-        targets = np.array([param1, param2, param3, param4])
+        targets = stock_price[-1]
         
         data.append({
             'company_id': company_id,
@@ -319,8 +345,8 @@ def train_model(use_conv=False):
         for batch_features, batch_targets, batch_lengths in train_loader:
             optimizer.zero_grad()
             
-            outputs = model(batch_features, batch_lengths)
-            loss = criterion(outputs, batch_targets)
+            outputs = model(batch_features, batch_lengths) # shape: (batch_size,)
+            loss = criterion(outputs, batch_targets) # batch_targets: (batch_size,)
             
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -353,7 +379,7 @@ def train_model(use_conv=False):
         else:
             patience_counter += 1
         
-        if epoch % 10 == 0:
+        if epoch % 2 == 0:
             print(f'Epoch {epoch}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
         
         if patience_counter >= patience:
