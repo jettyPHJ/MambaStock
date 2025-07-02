@@ -7,6 +7,7 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import random
+import data_set
 
 # 设置随机种子
 torch.manual_seed(42)
@@ -210,7 +211,7 @@ class FinancialDataset(Dataset):
     def __getitem__(self, idx):
         sample = self.data[idx]
         features = torch.FloatTensor(sample['features'])  # shape: (seq_len, input_dim)
-        target = torch.tensor([sample['targets']], dtype=torch.float32)  # shape: (1,)
+        target = torch.tensor([sample['target']], dtype=torch.float32)  # shape: (1,)
         length = features.shape[0]
         return features, target, length
 
@@ -243,70 +244,13 @@ def collate_fn(batch):
 
     return batch_features, batch_targets, batch_lengths
 
-def generate_synthetic_data(n_companies=100, min_quarters=8, max_quarters=40):
-    """生成合成财务数据"""
-    data = []
-    
-    for company_id in range(n_companies):
-        # 随机选择季度数量
-        n_quarters = random.randint(min_quarters, max_quarters)
-        
-        # 生成基础财务指标（随机游走）
-        revenue = 1000 + np.cumsum(np.random.randn(n_quarters) * 50)
-        profit = revenue * (0.1 + np.random.randn(n_quarters) * 0.02)
-        assets = revenue * (2 + np.random.randn(n_quarters) * 0.1)
-        equity = assets * (0.3 + np.random.randn(n_quarters) * 0.05)
-        debt = assets - equity
-        
-        # 计算衍生指标
-        profit_margin = profit / revenue
-        roe = profit / equity
-        debt_ratio = debt / assets
-        asset_turnover = revenue / assets
-        
-        # 生成股价（与基本面相关但有噪声）
-        stock_price = 50 + profit_margin * 100 + roe * 50 + np.random.randn(n_quarters) * 5
-        stock_price = np.maximum(stock_price, 1)  # 确保股价为正
-        
-        # 组合特征
-        features = np.column_stack([
-            revenue / 1000,  # 标准化
-            profit / 100,
-            assets / 1000,
-            equity / 1000,
-            debt / 1000,
-            profit_margin,
-            roe,
-            debt_ratio,
-            asset_turnover,
-            stock_price / 100
-        ])
-        
-        # 生成目标参数（基于财务特征的复杂函数）
-        targets = stock_price[-1]
-        
-        data.append({
-            'company_id': company_id,
-            'features': features,
-            'targets': targets
-        })
-    
-    return data
+
 
 def train_model(use_conv=False):
     """训练模型"""
     # 生成数据
     print("生成合成数据...")
-    data = generate_synthetic_data(n_companies=1000)
-    
-    # 数据标准化
-    all_features = np.vstack([d['features'] for d in data])
-    scaler = StandardScaler()
-    scaler.fit(all_features)
-    
-    # 应用标准化
-    for d in data:
-        d['features'] = scaler.transform(d['features'])
+    data = data_set.data_source    
     
     # 分割数据集
     train_size = int(0.8 * len(data))
@@ -321,7 +265,7 @@ def train_model(use_conv=False):
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=collate_fn)
     
     # 创建模型
-    input_dim = 10  # 财务特征维度
+    input_dim = 13  # 财务特征维度
     model = MambaModel(input_dim=input_dim, d_model=128, n_layers=3, n_params=4, use_conv=use_conv)
     
     # 损失函数和优化器
