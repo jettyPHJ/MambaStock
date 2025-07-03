@@ -8,6 +8,7 @@ from sklearn.preprocessing import StandardScaler
 import matplotlib.pyplot as plt
 import random
 import data_set
+import os
 
 # 设置随机种子
 torch.manual_seed(42)
@@ -54,7 +55,7 @@ class MambaBlock(nn.Module):
         
     def forward(self, x):
         # x shape: (batch_size, seq_len, d_model)
-        batch_size, seq_len, _ = x.shape
+        _, seq_len, _ = x.shape
         
         # 输入投影
         xz = self.in_proj(x)  # (batch_size, seq_len, d_inner * 2)
@@ -118,7 +119,7 @@ class MambaBlock(nn.Module):
 
 class MambaModel(nn.Module):
     """完整的Mamba模型"""
-    def __init__(self, input_dim, d_model=256, n_layers=4, n_params=4, use_conv=False):
+    def __init__(self, input_dim, d_model=128, n_layers=4, n_params=1, use_conv=False):
         super().__init__()
         self.input_dim = input_dim
         self.d_model = d_model
@@ -138,7 +139,7 @@ class MambaModel(nn.Module):
             nn.LayerNorm(d_model) for _ in range(n_layers)
         ])
         
-        # 输出层
+        # 输出层 
         self.output_layer = nn.Sequential(
             nn.Linear(d_model, d_model // 2),
             nn.ReLU(),
@@ -147,57 +148,56 @@ class MambaModel(nn.Module):
             nn.Sigmoid()  # 确保输出在0-1之间
         )
         
-    def forward(self, x, lengths=None):
-        #保存输入
-        batch_features = x
-        
-        # x shape: (batch_size, max_seq_len, input_dim)
+    def forward(self, origins, x, lengths=None):
+
         _, seq_len, _ = x.shape
-        
+
         # 输入嵌入
         x = self.input_embedding(x)  # (batch_size, seq_len, d_model)
-        
-        # 通过Mamba层
+
+        # Mamba 层 + 残差连接
         for mamba_layer, layer_norm in zip(self.mamba_layers, self.layer_norms):
             residual = x
             x = mamba_layer(x)
             x = layer_norm(x + residual)
-        
-        # 全局平均池化（处理变长序列）
+
+        # 池化：考虑 mask
         if lengths is not None:
-            # 创建掩码
             mask = torch.arange(seq_len, device=x.device).unsqueeze(0) < lengths.unsqueeze(1)
-            mask = mask.unsqueeze(-1).float()  # (batch_size, seq_len, 1)
-            
-            # 应用掩码并计算平均
+            mask = mask.unsqueeze(-1).float()  # (batch, seq_len, 1)
+
             x_masked = x * mask
-            x_pooled = x_masked.sum(dim=1) / lengths.unsqueeze(1).float()
+            valid_counts = mask.sum(dim=1) + 1e-8
+            x_pooled = x_masked.sum(dim=1) / valid_counts
         else:
-            x_pooled = x.mean(dim=1)  # (batch_size, d_model)
-        
-        # 输出预测
+            x_pooled = x.mean(dim=1)
+
+        # 输出参数预测
         params = self.output_layer(x_pooled)  # (batch_size, n_params)
-        output = self.manual_financial_model(batch_features,params)
+
+        # 自定义公式输出
+        output = self.manual_financial_model(origins, params)
         return output
     
-    def manual_financial_model(self, batch_features, params):
+    def manual_financial_model(self, oringins, params):
         """
         使用自定义的金融公式计算每个序列样本的预测股价。
-        - batch_features: shape (batch_size, seq_len, input_dim)
-        - params: shape (batch_size, 4)
+        - oringins: shape (batch_size, seq_len, input_dim)
+        - params: shape (batch_size, n_params)
         返回: shape (batch_size,)
         """
         # 拆解参数
-        a, b, c, d = params[:, 0], params[:, 1], params[:, 2], params[:, 3]  # 每个 (batch_size,)
-
-        # 计算特征统计量
-        mean_feat = batch_features.mean(dim=[1, 2])      # (batch_size,)
-        max_feat = batch_features.max(dim=1).values.max(dim=1).values  # (batch_size,)
-        std_feat = batch_features.std(dim=[1, 2])         # (batch_size,)
-
+        a = params[:, 0] # shape: (batch_size,)
+        
+        # 取每个序列的最后一个时间步
+        last = torch.stack([x[-1] for x in oringins], dim=0)  # shape: (batch_size, input_dim)
+        ry_now , ry_before = last[:, data_set.get_index('本期年营业额')], last[:, data_set.get_index('前期年营业额')]
+        gy_now , gy_before = last[:, data_set.get_index('本期年毛利额')], last[:, data_set.get_index('前期年毛利额')]
+        ny_now , ny_before = last[:, data_set.get_index('本期年净利润')], last[:, data_set.get_index('前期年净利润')]
+        
         # 构造手工股价预测公式
-        output = a * mean_feat + b * max_feat + c * std_feat + d
-
+        output = ry_now / ry_before * ( a * gy_now / gy_before + (1-a) * ny_now / ny_before)      
+                   
         return output  # (batch_size,)
 
 class FinancialDataset(Dataset):
@@ -210,46 +210,46 @@ class FinancialDataset(Dataset):
     
     def __getitem__(self, idx):
         sample = self.data[idx]
-        features = torch.FloatTensor(sample['features'])  # shape: (seq_len, input_dim)
+        origins = torch.tensor(sample['origin'], dtype=torch.float32) # shape: (seq_len, input_dim)
+        features = torch.tensor(sample['features'], dtype=torch.float32)  # shape: (seq_len, input_dim)
         target = torch.tensor([sample['target']], dtype=torch.float32)  # shape: (1,)
-        length = features.shape[0]
-        return features, target, length
-
+        return origins, features, target
 def collate_fn(batch):
     """
     batch: List of tuples from Dataset.__getitem__:
-        Each tuple: (features: Tensor(seq_len, input_dim),
-                     target: Tensor(()),
-                     length: int)
+        Each tuple: (origin: Tensor(seq_len, input_dim),
+                     features: Tensor(seq_len, input_dim),
+                     target: Tensor(()))
     """
-    max_len = max(len(f) for f, _, _ in batch)
+    max_len = max(f.shape[0] for _, f, _ in batch)
+    input_dim = batch[0][1].shape[1]  # features.shape[1]
 
+    batch_origins = []
     batch_features = []
     batch_targets = []
-    batch_lengths = []
+    lengths = []
 
-    for features, target, length in batch:
-        pad_len = max_len - len(features)
+    for origins, features, targets in batch:
+        lengths.append(features.shape[0])  # 保存真实长度
+        pad_len = max_len - features.shape[0]
         if pad_len > 0:
-            pad = torch.zeros(pad_len, features.shape[1])
+            pad = torch.zeros(pad_len, input_dim)
             features = torch.cat([features, pad], dim=0)
-        
+
+        batch_origins.append(origins)
         batch_features.append(features)
-        batch_targets.append(target)
-        batch_lengths.append(length)
+        batch_targets.append(targets)
+             
+    batch_features = torch.stack(batch_features)            # (batch_size, max_seq_len, input_dim)
+    batch_targets = torch.stack(batch_targets).squeeze()    # (batch_size,)
+    lengths = torch.tensor(lengths, dtype=torch.long)
 
-    batch_features = torch.stack(batch_features)              # (batch_size, max_seq_len, input_dim)
-    batch_targets = torch.stack(batch_targets).squeeze()      # (batch_size,)
-    batch_lengths = torch.tensor(batch_lengths, dtype=torch.long)
-
-    return batch_features, batch_targets, batch_lengths
+    return batch_origins, batch_features, batch_targets, lengths
 
 
 
 def train_model(use_conv=False):
     """训练模型"""
-    # 生成数据
-    print("生成合成数据...")
     data = data_set.data_source    
     
     # 分割数据集
@@ -265,8 +265,8 @@ def train_model(use_conv=False):
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=collate_fn)
     
     # 创建模型
-    input_dim = 13  # 财务特征维度
-    model = MambaModel(input_dim=input_dim, d_model=128, n_layers=3, n_params=4, use_conv=use_conv)
+    input_dim = len(data_set.feature_columns)  # 财务特征维度
+    model = MambaModel(input_dim=input_dim, use_conv=use_conv)
     
     # 损失函数和优化器
     criterion = nn.MSELoss()
@@ -286,10 +286,10 @@ def train_model(use_conv=False):
         # 训练阶段
         model.train()
         train_loss = 0
-        for batch_features, batch_targets, batch_lengths in train_loader:
+        for origins, batch_features, batch_targets, lengths in train_loader:
             optimizer.zero_grad()
             
-            outputs = model(batch_features, batch_lengths) # shape: (batch_size,)
+            outputs = model(origins, batch_features, lengths) # shape: (batch_size,)
             loss = criterion(outputs, batch_targets) # batch_targets: (batch_size,)
             
             loss.backward()
@@ -305,8 +305,8 @@ def train_model(use_conv=False):
         model.eval()
         val_loss = 0
         with torch.no_grad():
-            for batch_features, batch_targets, batch_lengths in val_loader:
-                outputs = model(batch_features, batch_lengths)
+            for origins, batch_features, batch_targets, lengths in val_loader:
+                outputs = model(origins, batch_features, lengths)
                 loss = criterion(outputs, batch_targets)
                 val_loss += loss.item()
         
@@ -325,65 +325,32 @@ def train_model(use_conv=False):
         
         if epoch % 2 == 0:
             print(f'Epoch {epoch}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
+            plot_train_val_loss(train_losses, val_losses, save_path='logs/loss.png')
         
         if patience_counter >= patience:
             print(f'Early stopping at epoch {epoch}')
-            break
-    
-    # 加载最佳模型
+            break     
+    # 加载训练中验证集表现最好的模型参数
     model.load_state_dict(torch.load('best_mamba_model.pth'))
+    return model
     
-    # 绘制训练曲线
+# 绘制训练曲线
+def plot_train_val_loss(train_losses, val_losses, save_path='loss.png'):
     plt.figure(figsize=(10, 6))
     plt.plot(train_losses, label='Training Loss')
     plt.plot(val_losses, label='Validation Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title(f'Training and Validation Loss (Conv: {use_conv})')
+    plt.title('Training and Validation Loss')
     plt.legend()
     plt.grid(True)
-    plt.show()
-    
-    # 评估模型
-    print("\n评估模型性能...")
-    model.eval()
-    all_predictions = []
-    all_targets = []
-    
-    with torch.no_grad():
-        for batch_features, batch_targets, batch_lengths in val_loader:
-            outputs = model(batch_features, batch_lengths)
-            all_predictions.append(outputs.numpy())
-            all_targets.append(batch_targets.numpy())
-    
-    predictions = np.vstack(all_predictions)
-    targets = np.vstack(all_targets)
-    
-    # 计算每个参数的MAE和MAPE
-    param_names = ['盈利能力', '财务稳健性', '增长潜力', '运营效率']
-    
-    print("\n各参数预测误差:")
-    for i in range(4):
-        mae = np.mean(np.abs(predictions[:, i] - targets[:, i]))
-        mape = np.mean(np.abs((predictions[:, i] - targets[:, i]) / targets[:, i])) * 100
-        print(f"{param_names[i]}: MAE={mae:.6f}, MAPE={mape:.2f}%")
-    
-    # 可视化预测结果
-    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-    axes = axes.ravel()
-    
-    for i in range(4):
-        axes[i].scatter(targets[:, i], predictions[:, i], alpha=0.6)
-        axes[i].plot([0, 1], [0, 1], 'r--', lw=2)
-        axes[i].set_xlabel(f'真实{param_names[i]}')
-        axes[i].set_ylabel(f'预测{param_names[i]}')
-        axes[i].set_title(f'{param_names[i]}预测效果')
-        axes[i].grid(True)
-    
-    plt.tight_layout()
-    plt.show()
-    
-    return model, scaler
+
+    # 确保目录存在
+    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
+    # 保存并关闭
+    plt.savefig(save_path)
+    plt.close()
+    return
 
 def predict_new_company(model, scaler, quarters_data):
     """为新公司预测参数"""
@@ -407,23 +374,4 @@ if __name__ == "__main__":
     USE_CONV = False  # 设置为False可以禁用卷积
     
     # 训练模型
-    model, scaler = train_model(use_conv=USE_CONV)
-    
-    # 演示预测
-    print("\n\n=== 预测演示 ===")
-    
-    # 创建一个示例公司的季度数据
-    sample_quarters = np.array([
-        # [收入, 利润, 资产, 股本, 债务, 利润率, ROE, 负债率, 资产周转率, 股价]
-        [1200, 120, 2400, 720, 1680, 0.10, 0.167, 0.70, 0.50, 45],
-        [1250, 135, 2500, 750, 1750, 0.108, 0.18, 0.70, 0.50, 48],
-        [1300, 140, 2600, 780, 1820, 0.108, 0.179, 0.70, 0.50, 50],
-        [1350, 150, 2700, 810, 1890, 0.111, 0.185, 0.70, 0.50, 52],
-    ]) / np.array([1000, 100, 1000, 1000, 1000, 1, 1, 1, 1, 100])  # 标准化
-    
-    predicted_params = predict_new_company(model, scaler, sample_quarters)
-    
-    param_names = ['盈利能力', '财务稳健性', '增长潜力', '运营效率']
-    print("预测的模型参数:")
-    for name, param in zip(param_names, predicted_params):
-        print(f"{name}: {param:.6f}")
+    model= train_model(use_conv=USE_CONV)
