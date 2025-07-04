@@ -192,7 +192,7 @@ class MambaModel(nn.Module):
         # 取每个序列的最后一个时间步
         last = torch.stack([x[-1] for x in oringins], dim=0)  # shape: (batch_size, input_dim)
         ry_now , ry_before = last[:, data_set.get_index('本期年营业额')], last[:, data_set.get_index('前期年营业额')]
-        gy_now , gy_before = last[:, data_set.get_index('本期年毛利额')], last[:, data_set.get_index('前期年毛利额')]
+        gy_now , gy_before = last[:, data_set.get_index('本期年毛利率')], last[:, data_set.get_index('前期年毛利率')]
         ny_now , ny_before = last[:, data_set.get_index('本期年净利润')], last[:, data_set.get_index('前期年净利润')]
         
         # 构造手工股价预测公式
@@ -268,6 +268,9 @@ def train_model(use_conv=False):
     input_dim = len(data_set.feature_columns)  # 财务特征维度
     model = MambaModel(input_dim=input_dim, use_conv=use_conv)
     
+    print(f"可训练参数总量: {count_parameters(model):,}")
+    print_model_parameters(model)
+    
     # 损失函数和优化器
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
@@ -333,7 +336,17 @@ def train_model(use_conv=False):
     # 加载训练中验证集表现最好的模型参数
     model.load_state_dict(torch.load('best_mamba_model.pth'))
     return model
-    
+
+#显示训练参数
+def print_model_parameters(model):
+    print("模型结构及参数：")
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"{name:50s} shape: {str(list(param.shape)):>20}  参数量: {param.numel():,}")
+
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 # 绘制训练曲线
 def plot_train_val_loss(train_losses, val_losses, save_path='loss.png'):
     plt.figure(figsize=(10, 6))
