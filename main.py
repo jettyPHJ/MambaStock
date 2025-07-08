@@ -118,7 +118,7 @@ class MambaBlock(nn.Module):
 
 class MambaModel(nn.Module):
     """完整的Mamba模型"""
-    def __init__(self, input_dim, d_model=128, n_layers=4, n_params=1, use_conv=False):
+    def __init__(self, input_dim, d_model=128, n_layers=4, n_params=3, use_conv=False):
         super().__init__()
         self.input_dim = input_dim
         self.d_model = d_model
@@ -173,7 +173,8 @@ class MambaModel(nn.Module):
 
         # 输出参数预测
         params = self.output_layer(x_pooled)  # (batch_size, n_params)
-
+        # 确保参数在合理范围内
+        params = params * 0.4 + 0.8           # output ∈ (0.8, 1.2)
         # 自定义公式输出
         output = self.manual_financial_model(origins, params)
         return output
@@ -186,16 +187,17 @@ class MambaModel(nn.Module):
         返回: shape (batch_size,)
         """
         # 拆解参数
-        a = params[:, 0] # shape: (batch_size,)
+        a, b, c = params[:, 0], params[:, 1], params[:, 2]  # shape: (batch_size,)
         
-        # 取每个序列的最后一个时间步
-        last = torch.stack([x[-1] for x in oringins], dim=0)  # shape: (batch_size, input_dim)
-        ry_now , ry_before = last[:, data_set.get_index('本期年营业额')], last[:, data_set.get_index('前期年营业额')]
-        gy_now , gy_before = last[:, data_set.get_index('本期年毛利率')], last[:, data_set.get_index('前期年毛利率')]
-        ny_now , ny_before = last[:, data_set.get_index('本期年净利润')], last[:, data_set.get_index('前期年净利润')]
+        # 取每个序列的最后两个时间步
+        last_1 = torch.stack([x[-1] for x in oringins], dim=0)  # shape: (batch_size, input_dim)
+        last_2 = torch.stack([x[-2] for x in oringins], dim=0)  # shape: (batch_size, input_dim)
+        ry_now , ry_before = last_1[:, data_set.get_index('TTM营业额')], last_2[:, data_set.get_index('TTM营业额')]
+        gy_now , gy_before = last_1[:, data_set.get_index('TTM毛利率')], last_2[:, data_set.get_index('TTM毛利率')]
+        ny_now , ny_before = last_1[:, data_set.get_index('TTM净利率')], last_2[:, data_set.get_index('TTM净利率')]
         
         # 构造手工股价预测公式
-        output = ry_now / ry_before * ( a * gy_now / gy_before + (1-a) * ny_now / ny_before)      
+        output = a * ry_now / ry_before * 2 * (b * torch.sigmoid(gy_now - gy_before) + c * torch.sigmoid(ny_now - ny_before))      
                    
         return output  # (batch_size,)
 
@@ -281,7 +283,7 @@ def train_model(use_conv=False):
     val_losses = []
     
     best_val_loss = float('inf')
-    patience = 10
+    patience = 7
     patience_counter = 0
     
     for epoch in range(100):
@@ -325,9 +327,8 @@ def train_model(use_conv=False):
         else:
             patience_counter += 1
         
-        if epoch % 2 == 0:
-            print(f'Epoch {epoch}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
-            plot_train_val_loss(train_losses, val_losses, save_path='logs/loss.png')
+        print(f'Epoch {epoch}, Train Loss: {train_loss:.6f}, Val Loss: {val_loss:.6f}')
+        plot_train_val_loss(train_losses, val_losses, save_path='logs/loss.png')
         
         if patience_counter >= patience:
             print(f'Early stopping at epoch {epoch}')

@@ -3,15 +3,46 @@ import random
 import numpy as np
 
 file_path = '机器学习数据源.xlsx'
-company_names = ['英伟达', '苹果']
-feature_columns = ['营业额', '毛利率','净利率','经营现金流/营业额','平均股价','股价低点','股价高点','前期年营业额','本期年营业额','前期年毛利率',
-                  '本期年毛利率','前期年净利润','本期年净利润']
+exclude_companies = ['英伟达','苹果']
+exclude_columns = ['时间','财务年']
 
-def get_index(feature_name):
-    return feature_columns.index(feature_name)
+def get_excel_meta(file_path, exclude_columns=None):
+    if exclude_columns is None:
+        exclude_columns = []
+
+    # 读取 Excel 文件
+    excel_data = pd.ExcelFile(file_path)
+
+    company_names = excel_data.sheet_names
+
+    # 读取第一个表单的数据
+    df = excel_data.parse(company_names[0])
+
+    # 获取第一个表的列名
+    columns = df.columns.tolist()
+
+    # 清理列名：去掉末尾的空白字符
+    cleaned_columns = []
+
+    for col in columns:
+        col = col.strip()  # 去掉前后空格
+        if not col:  # 如果遇到空白列名，停止处理
+            break
+        if "Unnamed" in col:  # 检查列名是否包含“Unnamed”
+            break
+        cleaned_columns.append(col)
+
+    # 过滤掉需要排除的公司和列
+    company_names = [name for name in company_names if name not in exclude_companies]
+    columns_to_include = [col for col in cleaned_columns if col not in exclude_columns]
+
+    # 将第一个表单的特征列添加到 feature_columns (一维数组)
+    feature_columns = columns_to_include
+
+    return company_names, feature_columns
 
 # 读取excel数据
-def load_excel(): 
+def load_excel(file_path, company_names, feature_columns): 
     data_map = {}
     for company_name in company_names:
         df = pd.read_excel(file_path, sheet_name=company_name)
@@ -30,12 +61,12 @@ def generate_synthetic_data(source:dict):
     for _, company_data in source.items():
         row_count = len(next(iter(company_data.values())))
         
-        # 至少要六行数据才能构造训练样本（否则无法避免包含最后一行）
+        # 至少要六行数据才能构造训练样本
         if row_count < 6:
             continue
         
-        # 每个公司生成的样本数量为 row_count // 2
-        sample_size = row_count // 2
+        # 每个公司生成的样本数量
+        sample_size = int(row_count // 1.5)
         
         feature_names = list(company_data.keys())
 
@@ -74,12 +105,25 @@ def generate_synthetic_data(source:dict):
             
     return data
 
-def sigmoid_normalize(arr, scale=8.0):
+def sigmoid_normalize(arr, scale=10.0):
     arr = np.array(arr, dtype=float)
     min_val, max_val = np.min(arr), np.max(arr)
     scaled = (arr - min_val) / (max_val - min_val + 1e-8)
     centered = (scaled - 0.5) * scale
     return 1 / (1 + np.exp(-centered))
 
-raw_data = load_excel()
+company_names, feature_columns = get_excel_meta(file_path, exclude_columns) #获取公司和评价指标
+
+#打印公司和列名
+print('公司：',company_names)  # 输出公司名列表
+print('指标：',feature_columns)  # 输出每个公司对应的特征列
+
+raw_data = load_excel(file_path, company_names, feature_columns)
 data_source = generate_synthetic_data(raw_data)
+
+def get_index(feature_name):
+    """获取特征名称的索引"""
+    try:
+        return feature_columns.index(feature_name)
+    except ValueError:
+        raise ValueError(f"特征名称 '{feature_name}' 不在特征列中。")
