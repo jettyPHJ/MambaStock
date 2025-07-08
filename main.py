@@ -174,7 +174,7 @@ class MambaModel(nn.Module):
         # 输出参数预测
         params = self.output_layer(x_pooled)  # (batch_size, n_params)
         # 确保参数在合理范围内
-        params = params * 0.4 + 0.8           # output ∈ (0.8, 1.2)
+        params = params * 2           # output ∈ (0, 3)
         # 自定义公式输出
         output = self.manual_financial_model(origins, params)
         return output
@@ -249,11 +249,12 @@ def collate_fn(batch):
 
 
 
-def train_model(use_conv=False):
+def train_model(model : MambaModel):
     """训练模型"""
     data = data_set.data_source    
     
     # 分割数据集
+    random.shuffle(data)
     train_size = int(0.8 * len(data))
     train_data = data[:train_size]
     val_data = data[train_size:]
@@ -265,10 +266,7 @@ def train_model(use_conv=False):
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=collate_fn)
     
-    # 创建模型
-    input_dim = len(data_set.feature_columns)  # 财务特征维度
-    model = MambaModel(input_dim=input_dim, use_conv=use_conv)
-    
+    # 打印模型参数信息
     print(f"可训练参数总量: {count_parameters(model):,}")
     print_model_parameters(model)
     
@@ -278,12 +276,11 @@ def train_model(use_conv=False):
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5)
     
     # 训练循环
-    print(f"开始训练 (使用卷积: {use_conv})...")
     train_losses = []
     val_losses = []
     
     best_val_loss = float('inf')
-    patience = 7
+    patience = 10
     patience_counter = 0
     
     for epoch in range(100):
@@ -291,6 +288,12 @@ def train_model(use_conv=False):
         model.train()
         train_loss = 0
         for origins, batch_features, batch_targets, lengths in train_loader:
+
+            origins = [o.to(device) for o in origins]  # origin 是 list[Tensor]，需要单独处理
+            batch_features = batch_features.to(device)
+            batch_targets = batch_targets.to(device)
+            lengths = lengths.to(device)
+
             optimizer.zero_grad()
             
             outputs = model(origins, batch_features, lengths) # shape: (batch_size,)
@@ -310,6 +313,12 @@ def train_model(use_conv=False):
         val_loss = 0
         with torch.no_grad():
             for origins, batch_features, batch_targets, lengths in val_loader:
+
+                origins = [o.to(device) for o in origins]
+                batch_features = batch_features.to(device)
+                batch_targets = batch_targets.to(device)
+                lengths = lengths.to(device)
+
                 outputs = model(origins, batch_features, lengths)
                 loss = criterion(outputs, batch_targets)
                 val_loss += loss.item()
@@ -383,8 +392,20 @@ def predict_new_company(model, scaler, quarters_data):
 
 # 演示使用
 if __name__ == "__main__":
+
+    print(f"CUDA版本: {torch.version.cuda}")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # 可以选择是否使用卷积
     USE_CONV = False  # 设置为False可以禁用卷积
-    
+    print(f"开始训练 (使用卷积: {USE_CONV})...")
+
+    # 创建模型
+    feature_dim = len(data_set.feature_columns)  # 财务特征维度
+    model = MambaModel(input_dim = feature_dim, d_model = 128, n_layers = 4, use_conv = USE_CONV)
+    model = model.to(device)
+
+    print(f"Using device: {device}")
+
     # 训练模型
-    model= train_model(use_conv=USE_CONV)
+    model = train_model(model)
