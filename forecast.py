@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from MambaStock import MambaModel
 import data_set
+from openpyxl import load_workbook
 
 file_path = '测试数据.xlsx'
 model_path = 'best_mamba_model.pth'
@@ -68,9 +69,21 @@ for company in company_names:
     df_company['模型预测结果'] = preds
     df_results[company] = df_company
 
-# 直接写回原始文件
-with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-    for company, df in df_results.items():
-        df.to_excel(writer, sheet_name=company, index=False)
-
-print("所有公司预测完成，结果已写入测试数据.xlsx")
+# 直接写回原始文件，添加一列“模型预测结果”到每个 sheet
+wb = load_workbook(file_path)
+for company, df in df_results.items():
+    if company not in wb.sheetnames:
+        print(f"{company} 不在 Excel 文件中，跳过")
+        continue
+    ws = wb[company]
+    preds = df['模型预测结果'].tolist()
+    # 找到写入列的位置（紧跟最后一列）
+    max_col = ws.max_column + 1
+    header_cell = ws.cell(row=1, column=max_col)
+    header_cell.value = '模型预测结果'
+    for i, pred in enumerate(preds):
+        cell = ws.cell(row=i+2, column=max_col)  # Excel行号从2开始（跳过标题）
+        if pred is not None:
+            cell.value = pred
+wb.save(file_path)
+print("预测结果列已追加")
