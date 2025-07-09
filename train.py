@@ -60,7 +60,28 @@ def collate_fn(batch):
 
     return batch_origins, batch_features, batch_targets, lengths
 
+def AdaptiveMAPE_loss(outputs, targets, min_output=0.05, fallback_weight=0.1):
+    """
+    自适应 MAPE 损失函数:
+    - 以预测值为分母，模拟“决策偏差”
+    - 对 outputs 太小时使用 fallback MAE 避免不稳定
+    """
+    outputs_safe = outputs.clone()
 
+    # 防止除以极小值
+    mask = outputs.abs() < min_output
+    outputs_safe[mask] = min_output
+
+    # MAPE 成分（投资视角）
+    percentage_error = torch.abs((targets - outputs) / (outputs_safe))
+
+    # Fallback：当 outputs 太小，偏向用 MAE
+    fallback_mae = torch.abs(targets - outputs)
+
+    # 自适应融合
+    loss = percentage_error * (~mask) + fallback_weight * fallback_mae * mask.float()
+
+    return torch.mean(loss) * 100
 
 def train_model(model):
     """训练模型"""
@@ -85,7 +106,6 @@ def train_model(model):
     # print_model_parameters(model)
     
     # 损失函数和优化器
-    criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5)
     
@@ -111,7 +131,7 @@ def train_model(model):
             optimizer.zero_grad()
             
             outputs = model(origins, batch_features, lengths) # shape: (batch_size,)
-            loss = criterion(outputs, batch_targets) # batch_targets: (batch_size,)
+            loss = AdaptiveMAPE_loss(outputs, batch_targets) # batch_targets: (batch_size,)
             
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -134,7 +154,7 @@ def train_model(model):
                 lengths = lengths.to(device)
 
                 outputs = model(origins, batch_features, lengths)
-                loss = criterion(outputs, batch_targets)
+                loss = AdaptiveMAPE_loss(outputs, batch_targets)
                 val_loss += loss.item()
         
         val_loss /= len(val_loader)

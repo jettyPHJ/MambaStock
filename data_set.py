@@ -7,7 +7,7 @@ exclude_companies = ['英伟达','苹果']
 exclude_columns = ['时间','财务年']
 min_sample_size = 6 #超参数，但是至少为3
 
-def get_excel_meta(file_path, exclude_columns=None):
+def get_excel_meta(file_path, exclude_companies = [], exclude_columns = []):
     if exclude_columns is None:
         exclude_columns = []
 
@@ -89,8 +89,7 @@ def generate_synthetic_data(source:dict):
                 col_arr = np.array(col_data, dtype=float) 
                 # 如果是目标列 '平均股价'，在同样的 min-max 体系下计算 target
                 if col_name == '平均股价':
-                    next_price = company_data[col_name][start_idx + seq_len]
-                    target = next_price  / col_data[-1]
+                    target = company_data[col_name][start_idx + seq_len]
                 # 对原始数据使用 Sigmoid 归一化
                 raw_data.append(col_data)
                 col_norm = sigmoid_normalize(col_arr) 
@@ -113,7 +112,7 @@ def sigmoid_normalize(arr, scale=10.0):
     centered = (scaled - 0.5) * scale
     return 1 / (1 + np.exp(-centered))
 
-company_names, feature_columns = get_excel_meta(file_path, exclude_columns) #获取公司和评价指标
+company_names, feature_columns = get_excel_meta(file_path, exclude_companies, exclude_columns) #获取公司和评价指标
 
 #打印公司和列名
 print('公司：',company_names)  # 输出公司名列表

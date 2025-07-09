@@ -11,12 +11,12 @@ model_path = 'best_mamba_model.pth'
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 获取特征维度
-company_names, feature_columns = data_set.get_excel_meta(file_path, data_set.exclude_columns)
+company_names, feature_columns = data_set.get_excel_meta(file_path,exclude_columns = data_set.exclude_columns)
 
-#验证测试数据和训练数据的feature_columns是否相同
+# 验证测试数据和训练数据的feature_columns是否相同
 if feature_columns != data_set.feature_columns:
     raise ValueError("测试数据和训练数据的特征列不匹配。")
-    
+
 input_dim = len(feature_columns)
 # 创建并加载模型
 model = MambaModel()
@@ -36,9 +36,10 @@ for company in company_names:
     company_data = data_map[company]
     num_rows = len(next(iter(company_data.values())))
     if num_rows < min_size:
-        print(company,":样本不足,无法预测")
+        print(company, ":样本不足, 无法预测")
         continue
-    preds = [None] * min_size 
+
+    preds = [None] * min_size
     for i in range(min_size, num_rows):
         sub_data = {key: val[:i+1] for key, val in company_data.items()}
 
@@ -62,14 +63,14 @@ for company in company_names:
             pred = model([origin_tensor[0]], feature_tensor, lengths)
             preds.append(pred.item())
 
-    # 保存到 DataFrame
+    # 保存预测结果
     df_company = pd.DataFrame(company_data)
-    df_company['mamba模型'] = preds
+    df_company['模型预测结果'] = preds
     df_results[company] = df_company
 
-# 写入 Excel 文件
-with pd.ExcelWriter('预测结果.xlsx') as writer:
+# 直接写回原始文件
+with pd.ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
     for company, df in df_results.items():
         df.to_excel(writer, sheet_name=company, index=False)
 
-print("所有公司预测完成，已保存到 预测结果.xlsx")
+print("所有公司预测完成，结果已写入测试数据.xlsx")
