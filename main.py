@@ -263,12 +263,12 @@ def train_model(model : MambaModel):
     train_dataset = FinancialDataset(train_data)
     val_dataset = FinancialDataset(val_data)
     
-    train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=8, shuffle=False, collate_fn=collate_fn)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=collate_fn)
     
     # 打印模型参数信息
     print(f"可训练参数总量: {count_parameters(model):,}")
-    print_model_parameters(model)
+    # print_model_parameters(model)
     
     # 损失函数和优化器
     criterion = nn.MSELoss()
@@ -402,7 +402,7 @@ if __name__ == "__main__":
 
     # 创建模型
     feature_dim = len(data_set.feature_columns)  # 财务特征维度
-    model = MambaModel(input_dim = feature_dim, d_model = 128, n_layers = 6, use_conv = USE_CONV)
+    model = MambaModel(input_dim = feature_dim, d_model = 128, n_layers = 5, use_conv = USE_CONV)
     model = model.to(device)
 
     print(f"Using device: {device}")
