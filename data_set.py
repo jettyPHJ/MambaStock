@@ -5,6 +5,7 @@ import numpy as np
 file_path = '机器学习数据源.xlsx'
 exclude_companies = ['英伟达','苹果']
 exclude_columns = ['时间','财务年']
+min_sample_size = 6 #超参数，但是至少为3
 
 def get_excel_meta(file_path, exclude_columns=None):
     if exclude_columns is None:
@@ -61,8 +62,8 @@ def generate_synthetic_data(source:dict):
     for _, company_data in source.items():
         row_count = len(next(iter(company_data.values())))
         
-        # 至少要六行数据才能构造训练样本
-        if row_count < 6:
+        # 至少要足够数据才能构造训练样本
+        if row_count < min_sample_size:
             continue
         
         # 每个公司生成的样本数量
@@ -71,8 +72,8 @@ def generate_synthetic_data(source:dict):
         feature_names = list(company_data.keys())
 
         for _ in range(sample_size):
-            # 随机决定子序列长度，范围为 [5, row_count - 1]
-            seq_len = random.randint(5, row_count-1)
+            # 随机决定子序列长度
+            seq_len = random.randint(min_sample_size-1, row_count-1)
             
             # 随机选择起点，使得子序列不包含最后一行
             max_start = row_count - seq_len - 1
@@ -117,9 +118,6 @@ company_names, feature_columns = get_excel_meta(file_path, exclude_columns) #获
 #打印公司和列名
 print('公司：',company_names)  # 输出公司名列表
 print('指标：',feature_columns)  # 输出每个公司对应的特征列
-
-raw_data = load_excel(file_path, company_names, feature_columns)
-data_source = generate_synthetic_data(raw_data)
 
 def get_index(feature_name):
     """获取特征名称的索引"""
