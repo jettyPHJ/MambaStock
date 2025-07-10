@@ -9,6 +9,8 @@ import data_set
 import os
 import MambaStock
 
+batch_size = 64
+
 # 设置随机种子
 torch.manual_seed(42)
 np.random.seed(42)
@@ -98,14 +100,14 @@ def train_model(model):
     train_dataset = FinancialDataset(train_data)
     val_dataset = FinancialDataset(val_data)
     
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False, collate_fn=collate_fn)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     
     # 打印模型参数信息
     print(f"可训练参数总量: {count_parameters(model):,}")
     # print_model_parameters(model)
     
-    # 损失函数和优化器
+    # 优化器
     optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=5, factor=0.5)
     
@@ -177,7 +179,7 @@ def train_model(model):
             print(f'Early stopping at epoch {epoch}')
             break     
     # 加载训练中验证集表现最好的模型参数
-    model.load_state_dict(torch.load('best_mamba_model.pth'))
+    model.load_state_dict(torch.load('best_mamba_model.pth', weights_only=True))
     return model
 
 #显示训练参数

@@ -23,7 +23,7 @@ if feature_columns != data_set.feature_columns:
 input_dim = len(feature_columns)
 # 创建并加载模型
 model = MambaModel()
-model.load_state_dict(torch.load(model_path, map_location=device))
+model.load_state_dict(torch.load(model_path, weights_only=True, map_location=device))
 model.to(device)
 model.eval()
 
