@@ -73,7 +73,7 @@ def AdaptiveMAPE_loss(outputs, targets, min_output=0.05, fallback_weight=0.1):
     outputs_safe[mask] = min_output
 
     # MAPE 成分（投资视角）
-    percentage_error = torch.abs((targets - outputs) / (outputs_safe))
+    percentage_error = torch.abs((targets - outputs) / (targets))
 
     # Fallback：当 outputs 太小，偏向用 MAE
     fallback_mae = torch.abs(targets - outputs)

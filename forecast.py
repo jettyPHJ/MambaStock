@@ -4,6 +4,8 @@ import numpy as np
 from MambaStock import MambaModel
 import data_set
 from openpyxl import load_workbook
+from openpyxl.styles import PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 file_path = '测试数据.xlsx'
 model_path = 'best_mamba_model.pth'
@@ -81,9 +83,28 @@ for company, df in df_results.items():
     max_col = ws.max_column + 1
     header_cell = ws.cell(row=1, column=max_col)
     header_cell.value = '模型预测结果'
+    # 设置列宽
+    ws.column_dimensions[get_column_letter(max_col)].width = 9
+    # 设置淡绿色填充色
+    fill = PatternFill(start_color="D1E7DD", end_color="D1E7DD", fill_type="solid")
+    header_cell.fill = fill
+    # 设置对齐方式和自动换行
+    alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    header_cell.alignment = alignment
+    # 设置框线
+    thin_border = Border(left=Side(style='thin'),
+                         right=Side(style='thin'),
+                         top=Side(style='thin'),
+                         bottom=Side(style='thin'))
+    header_cell.border = thin_border
     for i, pred in enumerate(preds):
         cell = ws.cell(row=i+2, column=max_col)  # Excel行号从2开始（跳过标题）
         if pred is not None:
             cell.value = pred
+            # 设置单元格格式为数值，显示两位小数
+            cell.number_format = '0.00'
+            cell.alignment = alignment  # 设置对齐方式
+            cell.border = thin_border  # 设置框线
+# 保存工作簿
 wb.save(file_path)
 print("预测结果列已追加")
