@@ -3,9 +3,11 @@ import random
 import numpy as np
 
 file_path = '机器学习数据源.xlsx'
-exclude_companies = ['英伟达','苹果']
-exclude_columns = ['时间','财务年']
+exclude_companies = ['英伟达','苹果'] # 训练数据中排除的公司
+exclude_columns = ['时间','财务年','股票代码'] # 不参与训练的列
 min_sample_size = 6 #超参数，但是至少为3
+
+target_column = '平均股价'
 
 def get_excel_meta(file_path, exclude_companies = [], exclude_columns = []):
     if exclude_columns is None:
@@ -16,26 +18,21 @@ def get_excel_meta(file_path, exclude_companies = [], exclude_columns = []):
 
     company_names = excel_data.sheet_names
 
-    # 读取第一个表单的数据
-    df = excel_data.parse(company_names[0])
+    #检查Excel所有sheet的列名是否一致
+    first_sheet = pd.read_excel(excel_data, sheet_name=company_names[0])
+    reference_columns = list(first_sheet.columns)
 
-    # 获取第一个表的列名
-    columns = df.columns.tolist()
+    for sheet in company_names[1:]:
+        df = pd.read_excel(excel_data, sheet_name=sheet, nrows=0)  # 只读取列名
+        if list(df.columns) != reference_columns:
+            raise ValueError(f"列名不一致：'{sheet}' 与 '{company_names[0]}' 的列名不同")
 
-    # 清理列名：去掉末尾的空白字符
-    cleaned_columns = []
-
-    for col in columns:
-        col = col.strip()  # 去掉前后空格
-        if not col:  # 如果遇到空白列名，停止处理
-            break
-        if "Unnamed" in col:  # 检查列名是否包含“Unnamed”
-            break
-        cleaned_columns.append(col)
+    # 将第一个表单的特征列添加到 feature_columns (一维数组)
+    columns = reference_columns
 
     # 过滤掉需要排除的公司和列
     company_names = [name for name in company_names if name not in exclude_companies]
-    columns_to_include = [col for col in cleaned_columns if col not in exclude_columns]
+    columns_to_include = [col for col in columns if col not in exclude_columns]
 
     # 将第一个表单的特征列添加到 feature_columns (一维数组)
     feature_columns = columns_to_include
@@ -88,7 +85,7 @@ def generate_synthetic_data(source:dict):
                 col_data = company_data[col_name][start_idx : start_idx + seq_len]
                 col_arr = np.array(col_data, dtype=float) 
                 # 如果是目标列 '平均股价'，在同样的 min-max 体系下计算 target
-                if col_name == '平均股价':
+                if col_name == target_column:
                     target = company_data[col_name][start_idx + seq_len]
                 # 对原始数据使用 Sigmoid 归一化
                 raw_data.append(col_data)

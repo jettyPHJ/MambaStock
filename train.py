@@ -1,5 +1,5 @@
 import torch
-import torch.nn as nn
+import torch.nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
@@ -9,7 +9,7 @@ import data_set
 import os
 import MambaStock
 
-batch_size = 64
+batch_size = 32
 
 # 设置随机种子
 torch.manual_seed(42)

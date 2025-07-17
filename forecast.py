@@ -14,7 +14,7 @@ model_path = 'best_mamba_model.pth'
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 获取特征维度
-company_names, feature_columns = data_set.get_excel_meta(file_path,exclude_columns = data_set.exclude_columns)
+company_names, feature_columns = data_set.get_excel_meta(file_path, exclude_columns = data_set.exclude_columns)
 
 # 验证测试数据和训练数据的feature_columns是否相同
 if feature_columns != data_set.feature_columns:
